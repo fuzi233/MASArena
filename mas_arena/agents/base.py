@@ -5,6 +5,7 @@ This module provides the base classes and interfaces for agent systems.
 """
 
 import abc
+import logging
 from typing import Dict, Any, Optional, Type, Callable
 import uuid
 import os
@@ -17,7 +18,7 @@ from openai.types.completion_usage import CompletionUsage
 import aiofiles
 
 from mas_arena.utils.llm_parser import LLMOutputParser
-
+logger = logging.getLogger(__name__)
 
 class AgentSystem(abc.ABC):
     """Base class for all agent systems in the benchmark framework
@@ -45,7 +46,7 @@ class AgentSystem(abc.ABC):
         self.config = config or {}
         self.evaluator_name = self.config.get("evaluator", None)
         if self.evaluator_name is None:
-            print("Evaluator name is not set in the configuration.")
+            logger.info("Evaluator name is not set in the configuration. Defaulting to None.")
         
         self.metrics_registry = None
         self.evaluator = None
@@ -61,6 +62,10 @@ class AgentSystem(abc.ABC):
         # Create directories if they don't exist
         self.responses_dir.mkdir(parents=True, exist_ok=True)
         self.visualizations_dir.mkdir(parents=True, exist_ok=True)
+
+        # Add this line to hold the message history for a single task
+        # It is managed by start_task and end_task
+        self.current_message_history: Optional[list] = None
 
         self.format_prompt = self.format_prompt()
         # ToolManager is now initialized by the ToolIntegrationWrapper, not the base agent
@@ -136,6 +141,46 @@ class AgentSystem(abc.ABC):
             Dictionary of run results (e.g., messages)
         """
         pass
+
+    async def start_task(self, problem: Dict[str, Any]):
+        """
+        (Optional) Starts a new task and initializes the agent's state for it.
+        This should be called once per problem before any steps are run.
+        Agent implementations supporting multi-step tasks should override this method.
+        """
+        self.current_message_history = []
+        logger.debug(f"Task started for problem: {problem.get('id', 'N/A')}")
+
+    async def run_step(self, prompt: str, **kwargs) -> Dict[str, Any]:
+        """
+        (Optional) Runs a single step of the agent's logic using the provided prompt.
+        Maintains conversation history within the task.
+        Agent implementations supporting multi-step tasks must override this method.
+
+        Args:
+            prompt: The input for the current step.
+
+        Returns:
+            A dictionary containing the agent's response for this step.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support the multi-step run_step interface. "
+            "Please implement it to use with stateful evaluators."
+        )
+
+    async def end_task(self) -> Optional[list]:
+        """
+        (Optional) Ends the current task and cleans up the agent's state.
+        This should be called once per problem after the task is complete.
+        Agent implementations supporting multi-step tasks should override this method.
+        
+        Returns:
+            The final message history for the completed task.
+        """
+        final_history = self.current_message_history
+        self.current_message_history = None  # Reset state
+        logger.debug("Task ended and state cleaned up.")
+        return final_history
 
     @staticmethod
     def parse_generated_text(text: str, parser: Optional[Type[LLMOutputParser]] = None,
