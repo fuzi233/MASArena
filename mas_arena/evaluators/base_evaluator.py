@@ -30,12 +30,22 @@ class BaseEvaluator(metaclass=ABCMeta):
             name: Name of the evaluator
             config: Configuration dictionary for the evaluator
         """
+        print(f"DEBUG - BaseEvaluator.__init__ - name: {name}, config: {config}")
         self.name = name
         self.config = config or {}
+        print(f"DEBUG - BaseEvaluator.__init__ - self.config (after config or {{}}): {self.config}")
         
         # Set up data and log paths
-        self.data_path = config.get("data_path", f"data/{name}_test.jsonl")
-        self.log_path = config.get("log_path", f"data/results/{name.upper()}")
+        try:
+            self.data_path = config.get("data_path", f"data/{name}_test.jsonl") if config else f"data/{name}_test.jsonl"
+            self.log_path = config.get("log_path", f"data/results/{name.upper()}") if config else f"data/results/{name.upper()}"
+            print(f"DEBUG - BaseEvaluator.__init__ - data_path: {self.data_path}, log_path: {self.log_path}")
+        except Exception as e:
+            print(f"DEBUG - BaseEvaluator.__init__ - Error setting up paths: {e}")
+            import traceback
+            print(traceback.format_exc())
+            self.data_path = f"data/{name}_test.jsonl"
+            self.log_path = f"data/results/{name.upper()}"
         
         # Set up logging
         os.makedirs(self.log_path, exist_ok=True)
