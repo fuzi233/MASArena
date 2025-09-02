@@ -1,0 +1,19 @@
+# ALFWorld 配置文件
+dataset:
+  data_path: ${ALFWORLD_DATA}  # 环境变量中的数据路径
+  split: valid_unseen  # 或者其他拆分集，如 train
+
+env:
+  thor:
+    screen_height: 300
+    screen_width: 300
+    smooth_nav: True
+    save_frames_to_disk: False
+  goal_desc_human_anns_prob: 0.5
+
+controller:
+  type: oracle
+  load_receps: False
+  debug: False
+
+max_steps: 100

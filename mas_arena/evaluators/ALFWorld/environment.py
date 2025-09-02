@@ -34,10 +34,28 @@ class AlfredThorEnv(object):
         Initialize the THOR environment.
         '''
         config = self.config
-        screen_height = config['env']['thor']['screen_height']
-        screen_width = config['env']['thor']['screen_width']
-        smooth_nav = config['env']['thor']['smooth_nav']
-        save_frames_to_disk = config['env']['thor']['save_frames_to_disk']
+        print(f"DEBUG - environment.py - config: {config}")
+        
+        if not config:
+            raise ValueError("Configuration is None or empty")
+            
+        if 'env' not in config:
+            print(f"DEBUG - 'env' key missing in config")
+            raise ValueError("'env' key missing in configuration")
+            
+        if 'thor' not in config.get('env', {}):
+            print(f"DEBUG - 'thor' key missing in config['env']")
+            raise ValueError("'thor' key missing in configuration['env']")
+            
+        try:
+            screen_height = config['env']['thor']['screen_height']
+            screen_width = config['env']['thor']['screen_width']
+            smooth_nav = config['env']['thor']['smooth_nav']
+            save_frames_to_disk = config['env']['thor']['save_frames_to_disk']
+            print(f"DEBUG - thor config loaded: height={screen_height}, width={screen_width}")
+        except Exception as e:
+            print(f"DEBUG - Error accessing thor config: {e}")
+            raise
 
         if not self.env:
             self.env = thor_env.ThorEnv(player_screen_height=screen_height,

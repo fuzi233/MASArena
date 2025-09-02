@@ -26,16 +26,41 @@ class AlfWorldEvaluator(BaseEvaluator):
         Custom initializer for AlfWorldEvaluator.
         It calls the parent initializer but is configured to skip standard data loading.
         """
-        super().__init__(name, config=config)
-
-        # Load ALFWorld-specific config and merge it into the main config
-        alfworld_config_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
-        if os.path.exists(alfworld_config_path):
-            with open(alfworld_config_path, 'r') as f:
-                alfworld_specific_config = yaml.safe_load(f)
+        print("DEBUG - AlfWorldEvaluator.__init__ - Starting initialization")
+        print(f"DEBUG - AlfWorldEvaluator.__init__ - Initial config: {config}")
+        
+        try:
+            super().__init__(name, config=config)
+            print(f"DEBUG - AlfWorldEvaluator.__init__ - After super().__init__, self.config: {self.config}")
             
-            # Merge and overwrite keys in the 'alfworld' section of the main config
-            self.config.setdefault('alfworld', {}).update(alfworld_specific_config)
+            # Load ALFWorld-specific config and merge it into the main config
+            alfworld_config_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
+            print(f"DEBUG - AlfWorldEvaluator.__init__ - Looking for config file at: {alfworld_config_path}")
+            print(f"DEBUG - AlfWorldEvaluator.__init__ - Config file exists: {os.path.exists(alfworld_config_path)}")
+            
+            if os.path.exists(alfworld_config_path):
+                try:
+                    with open(alfworld_config_path, 'r') as f:
+                        alfworld_specific_config = yaml.safe_load(f)
+                    print(f"DEBUG - AlfWorldEvaluator.__init__ - Loaded config: {alfworld_specific_config}")
+                    
+                    if self.config is None:
+                        self.config = {}
+                        print("DEBUG - AlfWorldEvaluator.__init__ - self.config was None, initializing empty dict")
+                    
+                    # Merge and overwrite keys in the 'alfworld' section of the main config
+                    self.config.setdefault('alfworld', {}).update(alfworld_specific_config)
+                    print(f"DEBUG - AlfWorldEvaluator.__init__ - Final merged config: {self.config}")
+                except Exception as e:
+                    print(f"DEBUG - AlfWorldEvaluator.__init__ - Error loading config file: {e}")
+                    import traceback
+                    print(traceback.format_exc())
+            else:
+                print("DEBUG - AlfWorldEvaluator.__init__ - Warning: config.yaml not found")
+        except Exception as e:
+            print(f"DEBUG - AlfWorldEvaluator.__init__ - Error during initialization: {e}")
+            import traceback
+            print(traceback.format_exc())
 
     def _load_data(self):
         """
@@ -49,14 +74,26 @@ class AlfWorldEvaluator(BaseEvaluator):
         Overrides the base run method to implement ALFWorld's specific task discovery logic.
         """
         print("Starting ALFWorld evaluation...")
+        
+        # 调试信息：检查self.config
+        print(f"DEBUG - self.config: {self.config}")
 
         # 1. Load configuration
         alfworld_config = self.config.get("alfworld", {}) if self.config else {}
+        print(f"DEBUG - alfworld_config: {alfworld_config}")
 
         # 2. Discover Task Files from config
         dataset_config = alfworld_config.get('dataset', {})
+        print(f"DEBUG - dataset_config: {dataset_config}")
         alfworld_data_path = os.path.expandvars(dataset_config.get('data_path', ''))
         split = dataset_config.get('split', 'val_unseen')
+
+        # 显式检查并使用 ALFWORLD_DATA 环境变量
+        if 'ALFWORLD_DATA' in os.environ:
+            print(f"DEBUG - Found ALFWORLD_DATA in environment: {os.environ['ALFWORLD_DATA']}")
+            alfworld_data_path = os.environ['ALFWORLD_DATA']
+        else:
+            print("DEBUG - ALFWORLD_DATA not found in environment.")
 
         # Fallback to environment variable if path is not in config
         if not alfworld_data_path and "ALFWORLD_DATA" in os.environ:
@@ -101,7 +138,15 @@ class AlfWorldEvaluator(BaseEvaluator):
             raise ValueError(f"Could not create agent system: {agent_system}")
 
         # 4. Create environment
-        env = AlfredThorEnv(alfworld_config)
+        print(f"DEBUG - Creating environment with config: {alfworld_config}")
+        try:
+            env = AlfredThorEnv(alfworld_config)
+            print("DEBUG - Environment created successfully")
+        except Exception as e:
+            print(f"DEBUG - Error creating environment: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return {"error": f"Failed to create environment: {str(e)}"}
 
         # 5. Run evaluation loop for all tasks
         all_results = []
@@ -163,8 +208,10 @@ class AlfWorldEvaluator(BaseEvaluator):
         
         try:
             while not done:
-                game_info = env.get_info()[3]
-                admissible_commands = game_info.get('admissible_commands', []) if game_info else []
+                info_tuple = env.get_info()
+                # Safely get game_info, ensuring it's a dict, defaulting to {} if it's None or the tuple is too short.
+                game_info = (info_tuple[3] if len(info_tuple) > 3 else None) or {}
+                admissible_commands = game_info.get('admissible_commands', [])
                 
                 if verbose:
                     print(f"\n--- Step {steps+1} ---")

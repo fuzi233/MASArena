@@ -12,6 +12,9 @@ import importlib
 # Import the global registry instance
 from .registry import benchmark_registry
 
+# Import the ALFWorld evaluator explicitly since it's in a subdirectory
+from .ALFWorld import alfworld_evaluator
+
 # --- Dynamic Discovery and Registration ---
 # Iterate over all modules in the current package path
 # and import them. This is what triggers the @register_benchmark decorators

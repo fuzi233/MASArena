@@ -396,61 +396,92 @@ class BenchmarkRunner:
         ))
 
     async def arun(self, benchmark_name="math", data_path=None, limit=None, agent_system="single_agent", agent_config=None, verbose=True, data_id=None, concurrency=10):
-        # Validate benchmark name
-        if benchmark_name not in BENCHMARKS:
-            raise ValueError(f"Unknown benchmark: {benchmark_name}. Supported: {', '.join(BENCHMARKS.keys())}")
-        
-        benchmark_config = BENCHMARKS[benchmark_name]
-        evaluator_class = benchmark_config.get("evaluator")
-        
-        if not evaluator_class:
-            raise ValueError(f"No evaluator class found for benchmark: {benchmark_name}")
+        print(f"DEBUG - BenchmarkRunner.arun - Starting with benchmark: {benchmark_name}")
+        try:
+            # Validate benchmark name
+            if benchmark_name not in BENCHMARKS:
+                print(f"DEBUG - BenchmarkRunner.arun - Unknown benchmark: {benchmark_name}")
+                raise ValueError(f"Unknown benchmark: {benchmark_name}. Supported: {', '.join(BENCHMARKS.keys())}")
+            
+            print(f"DEBUG - BenchmarkRunner.arun - Available benchmarks: {BENCHMARKS.keys()}")
+            benchmark_config = BENCHMARKS[benchmark_name]
+            print(f"DEBUG - BenchmarkRunner.arun - benchmark_config: {benchmark_config}")
+            
+            evaluator_class = benchmark_config.get("evaluator")
+            print(f"DEBUG - BenchmarkRunner.arun - evaluator_class: {evaluator_class}")
+            
+            if not evaluator_class:
+                print(f"DEBUG - BenchmarkRunner.arun - No evaluator class found")
+                raise ValueError(f"No evaluator class found for benchmark: {benchmark_name}")
 
-        # Instantiate the evaluator, passing the required name
-        evaluator = evaluator_class(name=benchmark_name)
+            # Instantiate the evaluator, passing the required name
+            print(f"DEBUG - BenchmarkRunner.arun - Creating evaluator instance")
+            try:
+                evaluator = evaluator_class(name=benchmark_name)
+                print(f"DEBUG - BenchmarkRunner.arun - Evaluator instance created: {evaluator}")
+            except Exception as e:
+                print(f"DEBUG - BenchmarkRunner.arun - Error creating evaluator: {e}")
+                import traceback
+                print(traceback.format_exc())
+                raise
 
-        # Check if the evaluator handles its own data/problem loop (like ALFWorld)
-        # We can infer this if it overrides the base `run` method.
-        if hasattr(evaluator, 'run') and evaluator.run.__qualname__.split('.')[0] != 'BaseEvaluator':
-             # This evaluator has a custom run loop.
-            summary = await evaluator.run(
-                agent_system=agent_system,
-                agent_config=agent_config,
-                data_path=data_path,
-                limit=limit,
-                verbose=verbose,
-                # Pass other relevant args if needed
+            # Check if the evaluator handles its own data/problem loop (like ALFWorld)
+            # We can infer this if it overrides the base `run` method.
+            print(f"DEBUG - BenchmarkRunner.arun - Checking if evaluator has custom run method")
+            if hasattr(evaluator, 'run') and evaluator.run.__qualname__.split('.')[0] != 'BaseEvaluator':
+                print(f"DEBUG - BenchmarkRunner.arun - Evaluator has custom run method")
+                # This evaluator has a custom run loop.
+                try:
+                    print(f"DEBUG - BenchmarkRunner.arun - Calling evaluator.run with agent_system={agent_system}")
+                    summary = await evaluator.run(
+                        agent_system=agent_system,
+                        agent_config=agent_config,
+                        data_path=data_path,
+                        limit=limit,
+                        verbose=verbose,
+                        # Pass other relevant args if needed
+                    )
+                    print(f"DEBUG - BenchmarkRunner.arun - evaluator.run completed successfully")
+                    # Since the custom run method returns the final summary, we can return it directly.
+                    return summary
+                except Exception as e:
+                    print(f"DEBUG - BenchmarkRunner.arun - Error during evaluator.run: {e}")
+                    import traceback
+                    print(traceback.format_exc())
+                    raise
+
+            # --- Standard Benchmark Execution Flow ---
+            # Prepare benchmark; we only need problems and config here
+            _, problems, benchmark_config, output_file = self._prepare_benchmark(
+                benchmark_name, data_path, limit, agent_system, agent_config, verbose, data_id
             )
-            # Since the custom run method returns the final summary, we can return it directly.
-            return summary
 
-        # --- Standard Benchmark Execution Flow ---
-        # Prepare benchmark; we only need problems and config here
-        _, problems, benchmark_config, output_file = self._prepare_benchmark(
-            benchmark_name, data_path, limit, agent_system, agent_config, verbose, data_id
-        )
+            if verbose:
+                print(f"Running {benchmark_name} benchmark asynchronously with {agent_system} agent system...")
+                print(f"Processing {len(problems)} problems with concurrency {concurrency}.")
 
-        if verbose:
-            print(f"Running {benchmark_name} benchmark asynchronously with {agent_system} agent system...")
-            print(f"Processing {len(problems)} problems with concurrency {concurrency}.")
+            self.metrics_registry.start_all_collectors()
+            self.metrics_collector.start_timer("mas_arena.execution")
 
-        self.metrics_registry.start_all_collectors()
-        self.metrics_collector.start_timer("mas_arena.execution")
+            semaphore = asyncio.Semaphore(concurrency)
 
-        semaphore = asyncio.Semaphore(concurrency)
+            async def process_with_semaphore(i, p):
+                async with semaphore:
+                    # Create a fresh agent instance per problem to isolate state
+                    new_agent = create_agent_system(agent_system, self.agent_config)
+                    new_agent.set_metrics_registry(self.metrics_registry)
+                    return await self._process_one_problem(i, p, new_agent, benchmark_config, verbose)
 
-        async def process_with_semaphore(i, p):
-            async with semaphore:
-                # Create a fresh agent instance per problem to isolate state
-                new_agent = create_agent_system(agent_system, self.agent_config)
-                new_agent.set_metrics_registry(self.metrics_registry)
-                return await self._process_one_problem(i, p, new_agent, benchmark_config, verbose)
+            tasks = [process_with_semaphore(i, p) for i, p in enumerate(problems)]
+            
+            all_results = await tqdm.gather(*tasks, desc="Processing Problems")
 
-        tasks = [process_with_semaphore(i, p) for i, p in enumerate(problems)]
-        
-        all_results = await tqdm.gather(*tasks, desc="Processing Problems")
-
-        return self._finalize_benchmark(all_results, benchmark_name, agent_system, output_file, verbose)
+            return self._finalize_benchmark(all_results, benchmark_name, agent_system, output_file, verbose)
+        except Exception as e:
+            print(f"DEBUG - BenchmarkRunner.arun - An unexpected error occurred: {e}")
+            import traceback
+            print(traceback.format_exc())
+            raise
 
     def visualize_results(self, output_dir=None):
         """

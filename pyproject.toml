@@ -61,6 +61,7 @@ dependencies = [
     "arxiv>=2.2.0",
     "waybackpy>=3.0.6",
     "browser-use==0.5.11",
+    "alfworld[vis]",
 ]
 
 [tool.ruff]
