@@ -1,6 +1,6 @@
 # ALFWorld 配置文件
 dataset:
-  data_path: ${ALFWORLD_DATA}  # 环境变量中的数据路径
+  data_path: /home/fuzi233/.cache/alfworld/json_2.1.1  # 环境变量中的数据路径
   split: valid_unseen  # 或者其他拆分集，如 train
 
 env:

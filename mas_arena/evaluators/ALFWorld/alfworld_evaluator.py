@@ -85,19 +85,19 @@ class AlfWorldEvaluator(BaseEvaluator):
         # 2. Discover Task Files from config
         dataset_config = alfworld_config.get('dataset', {})
         print(f"DEBUG - dataset_config: {dataset_config}")
+        
+        # 优先从config.yaml加载路径
         alfworld_data_path = os.path.expandvars(dataset_config.get('data_path', ''))
-        split = dataset_config.get('split', 'val_unseen')
+        split = dataset_config.get('split', 'valid_unseen')
 
-        # 显式检查并使用 ALFWORLD_DATA 环境变量
-        if 'ALFWORLD_DATA' in os.environ:
-            print(f"DEBUG - Found ALFWORLD_DATA in environment: {os.environ['ALFWORLD_DATA']}")
+        # 仅当config中未指定路径时，才回退到环境变量
+        if not alfworld_data_path and 'ALFWORLD_DATA' in os.environ:
+            print(f"DEBUG - data_path not in config, falling back to ALFWORLD_DATA environment variable: {os.environ['ALFWORLD_DATA']}")
             alfworld_data_path = os.environ['ALFWORLD_DATA']
+        elif alfworld_data_path:
+            print(f"DEBUG - Using data_path from config file: {alfworld_data_path}")
         else:
-            print("DEBUG - ALFWORLD_DATA not found in environment.")
-
-        # Fallback to environment variable if path is not in config
-        if not alfworld_data_path and "ALFWORLD_DATA" in os.environ:
-            alfworld_data_path = os.environ["ALFWORLD_DATA"]
+            print("DEBUG - ALFWORLD_DATA not found in environment and no data_path in config.")
 
         if not alfworld_data_path:
             print("\nError: ALFWorld data path not configured.")
