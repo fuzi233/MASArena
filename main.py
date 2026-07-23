@@ -4,10 +4,39 @@ import datetime
 import os
 import sys
 import time
+import types
 from pathlib import Path
 import asyncio
 import dotenv
-import agentops
+
+try:
+    import agentops
+except ModuleNotFoundError as exc:
+    if exc.name != "agentops":
+        raise
+
+    def _agentops_noop_decorator(*args, **kwargs):
+        del kwargs
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return lambda wrapped: wrapped
+
+    agentops = types.ModuleType("agentops")
+    agentops.init = lambda **kwargs: None
+    agentops_sdk = types.ModuleType("agentops.sdk")
+    agentops_decorators = types.ModuleType("agentops.sdk.decorators")
+    agentops_decorators.agent = _agentops_noop_decorator
+    agentops_decorators.operation = _agentops_noop_decorator
+    agentops_decorators.trace = _agentops_noop_decorator
+    agentops.sdk = agentops_sdk
+    agentops_sdk.decorators = agentops_decorators
+    sys.modules.update(
+        {
+            "agentops": agentops,
+            "agentops.sdk": agentops_sdk,
+            "agentops.sdk.decorators": agentops_decorators,
+        }
+    )
 
 from mas_arena.benchmark_runner import BenchmarkRunner
 import logging

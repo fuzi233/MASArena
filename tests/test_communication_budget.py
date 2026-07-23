@@ -695,3 +695,17 @@ def test_agentops_is_not_initialized_without_an_api_key(monkeypatch: pytest.Monk
     main.initialize_agentops()
 
     assert calls == []
+
+
+def test_main_loads_when_agentops_is_unavailable() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    script = "import sys; sys.modules['agentops'] = None; import main; from mas_arena.agents import AVAILABLE_AGENT_SYSTEMS; assert 'communication_budget' in AVAILABLE_AGENT_SYSTEMS"
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
