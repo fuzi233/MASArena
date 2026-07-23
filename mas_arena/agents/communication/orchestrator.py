@@ -5,7 +5,7 @@ import json
 import re
 from typing import Protocol
 
-from .actions import AggregatorAction, SolverAction
+from .actions import AggregatorAction, LegacyAggregatorAction, SolverAction
 from .config import TeamConfig
 from .prompts import PromptComposer
 from .state import CommunicationState
@@ -29,24 +29,32 @@ class TeamOrchestrator:
             aggregator_budget=self.config.resolved_aggregator_communication_budget,
             max_turns=self.config.max_turns,
             aggregator_max_steps=self.config.resolved_aggregator_max_steps,
+            prevent_duplicate_questions=self.config.protocol_version != "legacy-v1",
         )
         await self._run_solver_phase(problem, state)
         reports = [state.solver_report(solver_id) for solver_id in state.solver_ids]
-        final_answer = await self._run_aggregator_review(problem, reports, state)
-        if final_answer is None:
+        if self.config.protocol_version == "legacy-v1":
+            await self._run_legacy_aggregator_review(problem, reports, state)
             final_answer = await self.client.complete_text(
-                PromptComposer.final_aggregator_prompt(problem=problem, solver_reports=reports, state=state)
+                PromptComposer.legacy_final_aggregator_prompt(problem=problem, solver_reports=reports, state=state)
             )
             state.record_aggregation_decision(self._parse_aggregation_decision(final_answer, state))
         else:
-            state.record_aggregation_decision(
-                {
-                    "mode": "aggregator_submit",
-                    "source_solver_ids": [],
-                    "selected_candidate_solver_id": None,
-                    "rationale": "Aggregator submitted a final answer during bounded review.",
-                }
-            )
+            final_answer = await self._run_aggregator_review(problem, reports, state)
+            if final_answer is None:
+                final_answer = await self.client.complete_text(
+                    PromptComposer.final_aggregator_prompt(problem=problem, solver_reports=reports, state=state)
+                )
+                state.record_aggregation_decision(self._parse_aggregation_decision(final_answer, state))
+            else:
+                state.record_aggregation_decision(
+                    {
+                        "mode": "aggregator_submit",
+                        "source_solver_ids": [],
+                        "selected_candidate_solver_id": None,
+                        "rationale": "Aggregator submitted a final answer during bounded review.",
+                    }
+                )
         if not final_answer.strip():
             raise ValueError("aggregator returned an empty final_answer")
         messages = [
@@ -105,7 +113,11 @@ class TeamOrchestrator:
             actions = await asyncio.gather(
                 *(
                     self._request_json_action(
-                        PromptComposer.solver_step_prompt(
+                        (
+                            PromptComposer.legacy_solver_step_prompt
+                            if self.config.protocol_version == "legacy-v1"
+                            else PromptComposer.solver_step_prompt
+                        )(
                             actor_id=solver_id,
                             problem=problem,
                             state=state,
@@ -191,13 +203,44 @@ class TeamOrchestrator:
             state.record_aggregator_reply(action.recipient_id or "", int(question["sequence_id"]), reply)
         return None
 
+    async def _run_legacy_aggregator_review(
+        self, problem: str, reports: list[dict[str, object]], state: CommunicationState
+    ) -> None:
+        while state.can_send("aggregator"):
+            action = await self._request_json_action(
+                PromptComposer.legacy_aggregator_action_prompt(
+                    problem=problem,
+                    solver_reports=reports,
+                    state=state,
+                    visibility=self.config.budget_visibility,
+                ),
+                "legacy_aggregator",
+            )
+            if action is None or not isinstance(action, LegacyAggregatorAction) or action.action == "finalize":
+                return
+            try:
+                question = state.record_legacy_aggregator_question(action.recipient_id or "", action.question or "")
+            except ValueError:
+                return
+            reply = await self.client.complete_text(
+                PromptComposer.solver_reply_prompt(
+                    actor_id=action.recipient_id or "",
+                    problem=problem,
+                    question=question,
+                    state=state,
+                )
+            )
+            state.record_aggregator_reply(action.recipient_id or "", int(question["sequence_id"]), reply)
+
     async def _request_json_action(
         self,
         messages: list[dict[str, str]],
         action_kind: str,
-    ) -> SolverAction | AggregatorAction | None:
+    ) -> SolverAction | AggregatorAction | LegacyAggregatorAction | None:
         raw = await self.client.complete_text(messages)
-        action_type = SolverAction if action_kind == "solver" else AggregatorAction
+        action_type = (
+            SolverAction if action_kind == "solver" else LegacyAggregatorAction if action_kind == "legacy_aggregator" else AggregatorAction
+        )
         try:
             return action_type.model_validate(json.loads(raw))
         except (ValueError, json.JSONDecodeError):

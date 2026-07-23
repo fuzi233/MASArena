@@ -85,18 +85,19 @@ class BenchmarkRunner:
         """Return a filesystem-safe, concise label for experiment outputs."""
         if agent_system == "communication_budget":
             legacy_budget = agent_config.get("communication_budget")
-            solver_budget = agent_config.get(
-                "solver_communication_budget", legacy_budget if legacy_budget is not None else 1
-            )
-            aggregator_budget = agent_config.get(
-                "aggregator_communication_budget", legacy_budget if legacy_budget is not None else solver_budget
-            )
+            solver_budget = agent_config.get("solver_communication_budget")
+            if solver_budget is None:
+                solver_budget = legacy_budget if legacy_budget is not None else 1
+            aggregator_budget = agent_config.get("aggregator_communication_budget")
+            if aggregator_budget is None:
+                aggregator_budget = legacy_budget if legacy_budget is not None else solver_budget
             aggregator_steps = agent_config.get("aggregator_max_steps") or agent_config.get("max_turns", 4)
+            protocol = agent_config.get("protocol_version", "bounded-v2")
             raw = (
                 f"communication_budget_n{agent_config.get('solver_count', 2)}"
                 f"_sk{solver_budget}_ak{aggregator_budget}"
                 f"_{agent_config.get('budget_visibility', 'visible')}"
-                f"_t{agent_config.get('max_turns', 4)}_at{aggregator_steps}"
+                f"_t{agent_config.get('max_turns', 4)}_at{aggregator_steps}_p{protocol}"
                 f"_temp{agent_config.get('temperature', 1.0)}"
             )
         elif agent_system == "step_single_agent":

@@ -52,6 +52,22 @@ class AggregatorAction(BaseModel):
         return self
 
 
+class LegacyAggregatorAction(BaseModel):
+    """Original aggregator action schema retained for legacy-v1 reproduction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["ask", "finalize"]
+    recipient_id: str | None = None
+    question: str | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "LegacyAggregatorAction":
+        if self.action == "ask" and (not self.recipient_id or not self.question or not self.question.strip()):
+            raise ValueError("ask requires recipient_id and question")
+        return self
+
+
 class SingleStepAction(BaseModel):
     """One private reasoning step for the no-communication baseline."""
 

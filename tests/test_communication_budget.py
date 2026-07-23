@@ -160,6 +160,42 @@ def test_team_config_treats_explicit_none_aggregator_budget_as_the_solver_defaul
     assert config.resolved_aggregator_max_steps == 100
 
 
+def test_legacy_v1_inherits_a_legacy_budget_for_both_roles() -> None:
+    config = TeamConfig.from_mapping(
+        {"communication_budget": 0, "solver_communication_budget": None, "aggregator_communication_budget": None, "protocol_version": "legacy-v1"}
+    )
+
+    assert config.solver_communication_budget == 0
+    assert config.resolved_aggregator_communication_budget == 0
+
+
+@pytest.mark.asyncio
+async def test_legacy_v1_k0_uses_the_original_solver_and_aggregator_protocol() -> None:
+    class ScriptedClient:
+        async def complete_text(self, messages: list[dict[str, str]]) -> str:
+            system = messages[0]["content"]
+            if "synchronous team step" in system:
+                assert '"action":"continue_reasoning"' in system
+                return '{"action":"submit","reasoning_note":"The answer is A.","candidate_answer":"A"}'
+            if "All solver reports are complete" in system:
+                return '{"action":"finalize"}'
+            if "final aggregator" in system:
+                return (
+                    '<aggregation_decision>{"mode":"select_candidate","source_solver_ids":["solver_1"],'
+                    '"selected_candidate_solver_id":"solver_1","rationale":"The candidate matches the answer."}'
+                    '</aggregation_decision><final_answer>A</final_answer>'
+                )
+            raise AssertionError(f"Unexpected prompt: {system}")
+
+    result = await CommunicationBudgetMAS(
+        config={"solver_count": 1, "communication_budget": 0, "max_turns": 1, "protocol_version": "legacy-v1", "model_client": ScriptedClient()}
+    ).run_agent({"id": "x", "problem": "Question", "solution": "A"})
+
+    kinds = [event["kind"] for event in result["team_state"]["events"]]
+    assert kinds == ["solver_submission"]
+    assert result["final_answer"].endswith("<final_answer>A</final_answer>")
+
+
 def test_aggregator_action_uses_the_same_think_ask_submit_contract() -> None:
     assert AggregatorAction(action="think", reasoning_note="I need to compare the reports.").action == "think"
     with pytest.raises(ValueError, match="final_answer"):
@@ -573,6 +609,7 @@ def test_cli_help_exposes_team_configuration() -> None:
     assert "--solver-communication-budget" in result.stdout
     assert "--aggregator-communication-budget" in result.stdout
     assert "--aggregator-max-steps" in result.stdout
+    assert "--protocol-version" in result.stdout
     assert "--budget-visibility" in result.stdout
     assert "--max-turns" in result.stdout
     assert "--temperature" in result.stdout
@@ -593,7 +630,7 @@ def test_communication_result_label_contains_team_configuration(tmp_path: Path) 
         {"solver_count": 3, "communication_budget": 4, "budget_visibility": "hidden", "max_turns": 10, "temperature": 0.7},
     )
 
-    assert label == "communication_budget_n3_sk4_ak4_hidden_t10_at10_temp0p7"
+    assert label == "communication_budget_n3_sk4_ak4_hidden_t10_at10_pbounded-v2_temp0p7"
 
 
 def test_benchmark_summary_reports_token_usage_for_all_problems(tmp_path: Path) -> None:

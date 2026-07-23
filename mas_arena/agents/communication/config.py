@@ -5,6 +5,7 @@ from typing import Literal, Mapping, Any
 
 
 BudgetVisibility = Literal["visible", "hidden"]
+ProtocolVersion = Literal["bounded-v2", "legacy-v1"]
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class TeamConfig:
     budget_visibility: BudgetVisibility = "visible"
     max_turns: int = 4
     aggregator_max_steps: int | None = None
+    protocol_version: ProtocolVersion = "bounded-v2"
     temperature: float = 1.0
 
     def __post_init__(self) -> None:
@@ -35,6 +37,8 @@ class TeamConfig:
             raise ValueError("max_turns must be at least 1")
         if self.aggregator_max_steps is not None and self.aggregator_max_steps < 1:
             raise ValueError("aggregator_max_steps must be at least 1")
+        if self.protocol_version not in {"bounded-v2", "legacy-v1"}:
+            raise ValueError("protocol_version must be 'bounded-v2' or 'legacy-v1'")
         if not 0.0 <= self.temperature <= 2.0:
             raise ValueError("temperature must be between 0.0 and 2.0")
 
@@ -57,6 +61,7 @@ class TeamConfig:
             aggregator_max_steps=(
                 int(config["aggregator_max_steps"]) if config.get("aggregator_max_steps") is not None else None
             ),
+            protocol_version=config.get("protocol_version", "bounded-v2"),
             temperature=float(config.get("temperature", 1.0)),
         )
 

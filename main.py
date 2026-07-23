@@ -101,8 +101,8 @@ def main():
         help="Legacy shorthand that sets both role budgets when role-specific values are omitted",
     )
     team_group.add_argument(
-        "--solver-communication-budget", type=int, default=1,
-        help="Independent communication budget for each solver (default: 1)",
+        "--solver-communication-budget", type=int, default=None,
+        help="Independent communication budget for each solver (default: 1; inherits --communication-budget when supplied)",
     )
     team_group.add_argument(
         "--aggregator-communication-budget", type=int, default=None,
@@ -119,6 +119,10 @@ def main():
     team_group.add_argument(
         "--aggregator-max-steps", type=int, default=None,
         help="Maximum aggregator review steps per problem (default: max-turns)",
+    )
+    team_group.add_argument(
+        "--protocol-version", choices=["bounded-v2", "legacy-v1"], default="bounded-v2",
+        help="Communication protocol: bounded-v2 (default) or legacy-v1 for prior-run reproduction",
     )
     team_group.add_argument(
         "--temperature", type=float, default=1.0,
@@ -158,7 +162,7 @@ def main():
         parser.error("--solver-count must be at least 1")
     if args.communication_budget is not None and args.communication_budget < 0:
         parser.error("--communication-budget must be non-negative")
-    if args.solver_communication_budget < 0:
+    if args.solver_communication_budget is not None and args.solver_communication_budget < 0:
         parser.error("--solver-communication-budget must be non-negative")
     if args.aggregator_communication_budget is not None and args.aggregator_communication_budget < 0:
         parser.error("--aggregator-communication-budget must be non-negative")
@@ -237,6 +241,7 @@ def main():
         "budget_visibility": args.budget_visibility,
         "max_turns": args.max_turns,
         "aggregator_max_steps": args.aggregator_max_steps,
+        "protocol_version": args.protocol_version,
         "temperature": args.temperature,
     })
 
@@ -253,11 +258,15 @@ def main():
     print(f"Data: {args.data or 'default'}")
     print(f"Limit: {args.limit or 'all'}")
     if args.agent_system == "communication_budget":
+        resolved_solver_budget = args.solver_communication_budget
+        if resolved_solver_budget is None:
+            resolved_solver_budget = args.communication_budget if args.communication_budget is not None else 1
         resolved_aggregator_budget = args.aggregator_communication_budget
         if resolved_aggregator_budget is None:
-            resolved_aggregator_budget = args.communication_budget if args.communication_budget is not None else args.solver_communication_budget
+            resolved_aggregator_budget = args.communication_budget if args.communication_budget is not None else resolved_solver_budget
         resolved_aggregator_steps = args.aggregator_max_steps or args.max_turns
-        print(f"Solvers: {args.solver_count}; solver budget: {args.solver_communication_budget}; aggregator budget: {resolved_aggregator_budget}")
+        print(f"Protocol: {args.protocol_version}")
+        print(f"Solvers: {args.solver_count}; solver budget: {resolved_solver_budget}; aggregator budget: {resolved_aggregator_budget}")
         print(f"Budget visibility: {args.budget_visibility}; solver max turns: {args.max_turns}; aggregator max steps: {resolved_aggregator_steps}")
     print("=" * 80 + "\n")
 

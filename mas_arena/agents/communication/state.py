@@ -18,6 +18,7 @@ class CommunicationState:
     events: list[dict[str, object]] = field(default_factory=list)
     reports: dict[str, dict[str, object]] = field(default_factory=dict)
     aggregation_decision: dict[str, object] | None = None
+    prevent_duplicate_questions: bool = True
     superstep: int = 1
     _next_sequence_id: int = 1
 
@@ -31,6 +32,7 @@ class CommunicationState:
         aggregator_budget: int | None = None,
         max_turns: int = 4,
         aggregator_max_steps: int | None = None,
+        prevent_duplicate_questions: bool = True,
     ) -> "CommunicationState":
         if solver_count < 1:
             raise ValueError("solver_count must be at least 1")
@@ -54,6 +56,7 @@ class CommunicationState:
             active_steps={solver_id: 0 for solver_id in solver_ids},
             statuses={solver_id: "active" for solver_id in solver_ids},
             reasoning_notes={solver_id: [] for solver_id in solver_ids},
+            prevent_duplicate_questions=prevent_duplicate_questions,
         )
 
     @property
@@ -93,7 +96,8 @@ class CommunicationState:
             raise ValueError("solvers may not ask themselves")
         if not question.strip():
             raise ValueError("question must not be empty")
-        self._assert_new_question(solver_id, recipient_id, question)
+        if self.prevent_duplicate_questions:
+            self._assert_new_question(solver_id, recipient_id, question)
         if not self.can_send(solver_id):
             raise ValueError("communication budget exhausted")
         self._consume_solver_step(solver_id, reasoning_note)
@@ -151,6 +155,16 @@ class CommunicationState:
         return self._append_event(
             "aggregator_question", "aggregator", recipient_id, {"question": question, "reasoning_note": reasoning_note}, 1
         )
+
+    def record_legacy_aggregator_question(self, recipient_id: str, question: str) -> dict[str, object]:
+        """Record the pre-v2 aggregator question without step or duplicate guards."""
+        self._require_solver(recipient_id)
+        if not question.strip():
+            raise ValueError("question must not be empty")
+        if not self.can_send("aggregator"):
+            raise ValueError("communication budget exhausted")
+        self.budgets["aggregator"] -= 1
+        return self._append_event("aggregator_question", "aggregator", recipient_id, {"question": question}, 1)
 
     def record_aggregator_submission(self, reasoning_note: str, final_answer: str) -> dict[str, object]:
         self._consume_aggregator_step(reasoning_note)
@@ -221,6 +235,7 @@ class CommunicationState:
             "aggregator_max_steps": self.aggregator_max_steps,
             "reports": dict(self.reports),
             "aggregation_decision": self.aggregation_decision,
+            "prevent_duplicate_questions": self.prevent_duplicate_questions,
         }
 
     def _consume_solver_step(self, solver_id: str, reasoning_note: str) -> None:
