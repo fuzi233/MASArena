@@ -569,6 +569,7 @@ class AgentSystem(abc.ABC):
                 "status": "success",
                 **eval_result,
                 "messages": messages,
+                "team_state": run_output.get("team_state"),
                 "execution_time_ms": execution_time_ms,
                 "llm_usage": usage_metrics,
                 "response_file": str(response_file) if response_file else None,
@@ -753,4 +754,3 @@ def create_agent_system(name: str, config: Dict[str, Any] = None) -> Optional[Ag
 
 
     return agent_system
-

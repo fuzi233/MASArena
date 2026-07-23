@@ -93,6 +93,35 @@ Here are the most common arguments for `main.py`.
 | `--mcp-config-file`| Path to the MCP server configuration file. Required for MCP tools. | `None` |
 | `--data-id` | Data ID to use. | `None` |
 
+### Communication Budget Team
+
+Use the `communication_budget` agent system when evaluating an aggregator with a
+dynamic number of independent solvers. The aggregator is always unique.
+
+```bash
+python main.py --benchmark bbeh --agent-system communication_budget \
+  --solver-count 3 --communication-budget 2 \
+  --budget-visibility visible --max-turns 4 --temperature 0.7
+```
+
+`--communication-budget` is K for every Solver and for the sole Aggregator.
+Solvers execute synchronous steps: each step either continues reasoning, asks
+another Solver, or submits. A question consumes the asker's K; FIFO replies are
+free and do not consume a Solver step. When every Solver submits or exhausts
+`--max-turns`, the unique Aggregator receives their reports and may use its own
+K for focused follow-up questions before producing the final answer. In visible
+mode every question prompt displays the actor's remaining K; hidden mode enforces
+the same budget without revealing it to the model.
+
+The Aggregator must return exactly one final-answer envelope:
+
+```text
+<final_answer>exact benchmark answer</final_answer>
+```
+
+MASArena preserves the complete raw response as `final_answer`; the BBEH
+evaluator scores only the tag's content as `extracted_answer`.
+
 ### Optimizer Arguments
 
 These arguments are used when running an optimizer like AFlow via `--run-optimizer`.

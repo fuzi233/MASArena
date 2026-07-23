@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 dotenv.load_dotenv()
 
+
+def initialize_agentops() -> bool:
+    """Initialize optional tracing only when the user explicitly configured it."""
+    api_key = os.getenv("AGENTOPS_API_KEY", "").strip()
+    if not api_key:
+        return False
+    agentops.init(api_key=api_key)
+    return True
+
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Run benchmarks for multi-agent systems")
@@ -79,6 +89,41 @@ def main():
         "--data-id", type=str, default=None,
         help="Data ID to use (default: None)"
     )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for benchmark sampling (default: 42)")
+
+    team_group = parser.add_argument_group("Communication Budget Team Settings")
+    team_group.add_argument(
+        "--solver-count", type=int, default=2,
+        help="Number of solver agents for communication_budget (default: 2)",
+    )
+    team_group.add_argument(
+        "--communication-budget", type=int, default=None,
+        help="Legacy shorthand that sets both role budgets when role-specific values are omitted",
+    )
+    team_group.add_argument(
+        "--solver-communication-budget", type=int, default=1,
+        help="Independent communication budget for each solver (default: 1)",
+    )
+    team_group.add_argument(
+        "--aggregator-communication-budget", type=int, default=None,
+        help="Independent communication budget for the aggregator (default: solver communication budget)",
+    )
+    team_group.add_argument(
+        "--budget-visibility", choices=["visible", "hidden"], default="visible",
+        help="Whether members see their remaining communication actions (default: visible)",
+    )
+    team_group.add_argument(
+        "--max-turns", type=int, default=4,
+        help="Maximum active solver steps per problem (default: 4)",
+    )
+    team_group.add_argument(
+        "--aggregator-max-steps", type=int, default=None,
+        help="Maximum aggregator review steps per problem (default: max-turns)",
+    )
+    team_group.add_argument(
+        "--temperature", type=float, default=1.0,
+        help="Model sampling temperature for communication_budget and step_single_agent (default: 1.0)",
+    )
 
     # Optimizer arguments
     optimizer_group = parser.add_argument_group("Optimizer Settings")
@@ -109,6 +154,20 @@ def main():
 
     # Parse arguments
     args = parser.parse_args()
+    if args.solver_count < 1:
+        parser.error("--solver-count must be at least 1")
+    if args.communication_budget is not None and args.communication_budget < 0:
+        parser.error("--communication-budget must be non-negative")
+    if args.solver_communication_budget < 0:
+        parser.error("--solver-communication-budget must be non-negative")
+    if args.aggregator_communication_budget is not None and args.aggregator_communication_budget < 0:
+        parser.error("--aggregator-communication-budget must be non-negative")
+    if args.max_turns < 1:
+        parser.error("--max-turns must be at least 1")
+    if args.aggregator_max_steps is not None and args.aggregator_max_steps < 1:
+        parser.error("--aggregator-max-steps must be at least 1")
+    if not 0.0 <= args.temperature <= 2.0:
+        parser.error("--temperature must be between 0.0 and 2.0")
 
     if args.run_optimizer:
         if args.run_optimizer == "aflow":
@@ -170,6 +229,17 @@ def main():
     if args.use_tools:
         agent_config["use_tools"] = True
 
+    agent_config.update({
+        "solver_count": args.solver_count,
+        "communication_budget": args.communication_budget,
+        "solver_communication_budget": args.solver_communication_budget,
+        "aggregator_communication_budget": args.aggregator_communication_budget,
+        "budget_visibility": args.budget_visibility,
+        "max_turns": args.max_turns,
+        "aggregator_max_steps": args.aggregator_max_steps,
+        "temperature": args.temperature,
+    })
+
     # Create directories if needed
     Path(args.results_dir).mkdir(exist_ok=True)
 
@@ -182,6 +252,13 @@ def main():
     print(f"Agent System: {args.agent_system}")
     print(f"Data: {args.data or 'default'}")
     print(f"Limit: {args.limit or 'all'}")
+    if args.agent_system == "communication_budget":
+        resolved_aggregator_budget = args.aggregator_communication_budget
+        if resolved_aggregator_budget is None:
+            resolved_aggregator_budget = args.communication_budget if args.communication_budget is not None else args.solver_communication_budget
+        resolved_aggregator_steps = args.aggregator_max_steps or args.max_turns
+        print(f"Solvers: {args.solver_count}; solver budget: {args.solver_communication_budget}; aggregator budget: {resolved_aggregator_budget}")
+        print(f"Budget visibility: {args.budget_visibility}; solver max turns: {args.max_turns}; aggregator max steps: {resolved_aggregator_steps}")
     print("=" * 80 + "\n")
 
     # Create benchmark runner
@@ -197,14 +274,8 @@ def main():
         if args.verbose:
             print(f"Warning: {args.benchmark} benchmark does not support concurrency. Running synchronously.\n")
 
-    # Set up agent system monitoring with AgentOps
-    if not os.getenv("AGENTOPS_API_KEY"):
-        logger.warning(
-            """AGENTOPS_API_KEY cannot be found in `.env`. To view tracing data in agentops, please set the api key. 
-You can get the key at https://app.agentops.ai/settings/projects.
-"""
-        )
-    agentops.init(api_key=os.getenv("AGENTOPS_API_KEY", ""))
+    # AgentOps is opt-in: absent configuration must not create telemetry or upload errors.
+    initialize_agentops()
 
 
     # Run benchmark
@@ -219,6 +290,7 @@ You can get the key at https://app.agentops.ai/settings/projects.
                 verbose=args.verbose,
                 data_id=args.data_id,
                 concurrency=args.concurrency,
+                seed=args.seed,
             ))
         else:
             summary = runner.run(
@@ -229,6 +301,7 @@ You can get the key at https://app.agentops.ai/settings/projects.
                 agent_config=agent_config if agent_config else None,
                 verbose=args.verbose,
                 data_id=args.data_id,
+                seed=args.seed,
             )
         logger.info(f"Benchmark summary: {summary}")
         return 0

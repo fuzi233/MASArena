@@ -15,7 +15,12 @@ class BenchmarkRegistry:
         """Initializes the benchmark registry."""
         self._benchmarks: Dict[str, Dict[str, Any]] = {}
 
-    def register(self, name: str, normalization_keys: Dict[str, str]) -> Callable:
+    def register(
+        self,
+        name: str,
+        normalization_keys: Dict[str, str],
+        data_path: str | None = None,
+    ) -> Callable:
         """
         Returns a decorator that registers an evaluator class for a given mas_arena.
 
@@ -39,6 +44,8 @@ class BenchmarkRegistry:
                 "evaluator": cls,
                 "normalization_keys": normalization_keys,
             }
+            if data_path is not None:
+                self._benchmarks[name]["data_path"] = data_path
             return cls
         return decorator
 

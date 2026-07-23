@@ -78,6 +78,12 @@ class MathEvaluator(BaseEvaluator):
         Returns:
             The extracted answer
         """
+        # Communication-budget MAS emits a strict XML wrapper. Extract it before
+        # generic math heuristics so a correct scalar is not compared as markup.
+        tagged_matches = re.findall(r"<final_answer>\s*(.*?)\s*</final_answer>", text, re.DOTALL)
+        if len(tagged_matches) == 1 and tagged_matches[0].strip():
+            return tagged_matches[0].strip()
+
         # Look for LaTeX boxed answers first
         pattern = r"\\boxed{((?:[^{}]|{[^{}]*})*)}"
         boxed_matches = re.findall(pattern, text, re.DOTALL)

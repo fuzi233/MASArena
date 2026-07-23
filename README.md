@@ -82,6 +82,7 @@ For comprehensive guides, tutorials, and API references, visit our complete [doc
 
 * [x] Add asynchronous support for model calls
 * [x] Implement failure detection in MAS workflows
+* [ ] Communication-budget MAS: make the Aggregator share the `--max-turns` active-action limit with each Solver, and record its steps and stop reason in the trace
 * [ ] Add more benchmarks emphasizing tool usage
 * [ ] Improve configuration for MAS and tool integration
 * [ ] Integrate multiple tools(e.g., Browser, Video, Audio, Docker) into the current evaluation framework

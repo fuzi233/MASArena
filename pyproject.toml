@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+    "commprobe",
     "absl-py>=2.2.2",
     "asteval>=0.9.31",
     "immutabledict>=4.2.1",
@@ -53,6 +54,9 @@ dependencies = [
     "pydantic_core",
     "agentops>=0.4.19",
 ]
+
+[tool.uv.sources]
+commprobe = { path = ".." }
 
 [tool.ruff]
 line-length = 120

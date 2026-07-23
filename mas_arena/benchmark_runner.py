@@ -9,6 +9,7 @@ This module provides functionality for running benchmarks on agent systems.
 import os
 import json
 import random
+import re
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -65,6 +66,7 @@ class BenchmarkRunner:
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.results = []
         self.agent_config = None  # Store agent configuration
+        self.experiment_config = {}
         self.metrics_registry = None
         self.metrics_collector = None
 
@@ -78,12 +80,60 @@ class BenchmarkRunner:
         # Create centralized metrics collector
         self.metrics_collector = MetricsCollector(self.metrics_registry)
 
+    @staticmethod
+    def _agent_label(agent_system, agent_config):
+        """Return a filesystem-safe, concise label for experiment outputs."""
+        if agent_system == "communication_budget":
+            legacy_budget = agent_config.get("communication_budget")
+            solver_budget = agent_config.get(
+                "solver_communication_budget", legacy_budget if legacy_budget is not None else 1
+            )
+            aggregator_budget = agent_config.get(
+                "aggregator_communication_budget", legacy_budget if legacy_budget is not None else solver_budget
+            )
+            aggregator_steps = agent_config.get("aggregator_max_steps") or agent_config.get("max_turns", 4)
+            raw = (
+                f"communication_budget_n{agent_config.get('solver_count', 2)}"
+                f"_sk{solver_budget}_ak{aggregator_budget}"
+                f"_{agent_config.get('budget_visibility', 'visible')}"
+                f"_t{agent_config.get('max_turns', 4)}_at{aggregator_steps}"
+                f"_temp{agent_config.get('temperature', 1.0)}"
+            )
+        elif agent_system == "step_single_agent":
+            raw = f"step_single_agent_t{agent_config.get('max_turns', 4)}_temp{agent_config.get('temperature', 1.0)}"
+        else:
+            raw = agent_system
+        return re.sub(r"[^A-Za-z0-9_-]+", "", raw.replace(".", "p"))
+
+    @staticmethod
+    def _summary_agent_config(agent_config):
+        """Preserve reproducibility settings without serializing clients or secrets."""
+        blocked = {"api_key", "openai_api_key", "model_client"}
+        return {
+            key: value
+            for key, value in agent_config.items()
+            if key.lower() not in blocked and isinstance(value, (str, int, float, bool, type(None), list, dict))
+        }
+
     def _setup_metrics(self):
         """Set up metrics collection"""
         registry = MetricsRegistry()
         return registry
 
-    def _prepare_benchmark(self, benchmark_name, data_path, limit, agent_system, agent_config, verbose, data_id=None):
+    @staticmethod
+    def _communication_stats(team_state):
+        """Derive compact aggregate counts while retaining the raw trace separately."""
+        events = team_state.get("events", []) if isinstance(team_state, dict) else []
+        return {
+            "solver_questions": sum(event.get("kind") == "solver_question" for event in events),
+            "aggregator_questions": sum(event.get("kind") == "aggregator_question" for event in events),
+            "solver_replies": sum(event.get("kind") == "solver_reply" for event in events),
+            "aggregator_replies": sum(event.get("kind") == "aggregator_reply" for event in events),
+            "charged_question_budget": sum(int(event.get("charged_budget", 0)) for event in events),
+            "solver_steps": team_state.get("solver_steps", {}),
+        }
+
+    def _prepare_benchmark(self, benchmark_name, data_path, limit, agent_system, agent_config, verbose, data_id=None, seed=42):
         """
         Run a benchmark with the specified configuration.
 
@@ -114,7 +164,7 @@ class BenchmarkRunner:
         if not data_path:
             data_path = benchmark_config.get("data_path", f"data/{benchmark_name}_test.jsonl")
 
-        output_file = Path(self.results_dir) / f"{benchmark_name}_{agent_system}_{self.timestamp}.json"
+        output_file = Path(self.results_dir) / f"{benchmark_name}_{self._agent_label(agent_system, self.agent_config)}_seed{seed}_{self.timestamp}.json"
 
         agent = create_agent_system(agent_system, self.agent_config)
         if agent is None:
@@ -138,7 +188,7 @@ class BenchmarkRunner:
 
 
         if limit and limit < len(problems):
-            problems = random.sample(problems, limit)
+            problems = random.Random(seed).sample(problems, limit)
 
         return agent, problems, benchmark_config, output_file
 
@@ -176,6 +226,11 @@ class BenchmarkRunner:
                 "llm_usage": results.get("llm_usage", {}),
                 "summary": {"correct": is_correct, "score": score, "duration_ms": duration_ms},
             }
+            team_state = results.get("team_state")
+            if isinstance(team_state, dict):
+                result_entry["communication_trace"] = team_state
+                result_entry["communication_stats"] = self._communication_stats(team_state)
+                result_entry["aggregation_decision"] = team_state.get("aggregation_decision")
             if verbose:
                 status_char = "E" if results.get("status") == "error" else "✓" if is_correct else "✗"
                 print(f"Result: {status_char} ({duration_ms:.0f}ms)")
@@ -203,10 +258,12 @@ class BenchmarkRunner:
 
         total_duration = sum(r.get("duration_ms", 0) for r in all_results)
         
-        # Calculate avg_tokens only on successful (non-errored) runs
-        successful_runs = [r for r in all_results if r.get("status") != "error"]
-        total_tokens_successful = sum(r.get("llm_usage", {}).get("total_tokens", 0) for r in successful_runs)
-        avg_tokens = total_tokens_successful / len(successful_runs) if successful_runs else 0
+        # Report all consumed tokens, including requests made before a failed problem.
+        completed_runs = [r for r in all_results if r.get("status") != "error"]
+        total_tokens_all = sum(r.get("llm_usage", {}).get("total_tokens", 0) for r in all_results)
+        total_tokens_completed = sum(r.get("llm_usage", {}).get("total_tokens", 0) for r in completed_runs)
+        avg_tokens_all = total_tokens_all / total if total > 0 else 0
+        avg_tokens_completed = total_tokens_completed / len(completed_runs) if completed_runs else 0
 
         summary = {
             "benchmark": benchmark_name,
@@ -217,8 +274,14 @@ class BenchmarkRunner:
             "accuracy": accuracy,
             "total_duration_ms": total_duration,
             "avg_duration_ms": total_duration / total if total > 0 else 0,
-            "avg_tokens_per_successful_problem": avg_tokens,
+            "total_tokens_all_problems": total_tokens_all,
+            "avg_tokens_per_problem": avg_tokens_all,
+            "total_tokens_completed_problems": total_tokens_completed,
+            "avg_tokens_per_completed_problem": avg_tokens_completed,
+            # Backward-compatible alias. Historically this meant non-errored, not correct, problems.
+            "avg_tokens_per_successful_problem": avg_tokens_completed,
             "results_file": str(output_file),
+            "experiment_config": self.experiment_config,
             # "metrics_dir": str(metrics_output),
             "timestamp": self.timestamp,
         }
@@ -379,7 +442,7 @@ class BenchmarkRunner:
 
             print("=" * 80)
 
-    def run(self, benchmark_name="math", data_path=None, limit=None, agent_system="single_agent", agent_config=None, verbose=True, data_id=None):
+    def run(self, benchmark_name="math", data_path=None, limit=None, agent_system="single_agent", agent_config=None, verbose=True, data_id=None, seed=42):
         """
         Run a benchmark sequentially. This is a wrapper around arun.
         """
@@ -391,14 +454,24 @@ class BenchmarkRunner:
             agent_config=agent_config,
             verbose=verbose,
             data_id=data_id,
+            seed=seed,
             concurrency=1  # Run sequentially
         ))
 
-    async def arun(self, benchmark_name="math", data_path=None, limit=None, agent_system="single_agent", agent_config=None, verbose=True, data_id=None, concurrency=10):
+    async def arun(self, benchmark_name="math", data_path=None, limit=None, agent_system="single_agent", agent_config=None, verbose=True, data_id=None, concurrency=10, seed=42):
         # Prepare benchmark; we only need problems and config here
         _, problems, benchmark_config, output_file = self._prepare_benchmark(
-            benchmark_name, data_path, limit, agent_system, agent_config, verbose, data_id
+            benchmark_name, data_path, limit, agent_system, agent_config, verbose, data_id, seed
         )
+        self.experiment_config = {
+            "agent_config": self._summary_agent_config(self.agent_config),
+            "data_path": str(data_path or benchmark_config.get("data_path")),
+            "requested_limit": limit,
+            "actual_problem_count": len(problems),
+            "concurrency": concurrency,
+            "seed": seed,
+            "selected_problem_ids": [str(problem.get(benchmark_config.get("normalization_keys", {}).get("id", "id"), "")) for problem in problems],
+        }
 
         if verbose:
             print(f"Running {benchmark_name} benchmark asynchronously with {agent_system} agent system...")
@@ -414,7 +487,12 @@ class BenchmarkRunner:
                 # Create a fresh agent instance per problem to isolate state
                 new_agent = create_agent_system(agent_system, self.agent_config)
                 new_agent.set_metrics_registry(self.metrics_registry)
-                return await self._process_one_problem(i, p, new_agent, benchmark_config, verbose)
+                try:
+                    return await self._process_one_problem(i, p, new_agent, benchmark_config, verbose)
+                finally:
+                    close = getattr(new_agent, "aclose", None)
+                    if callable(close):
+                        await close()
 
         tasks = [process_with_semaphore(i, p) for i, p in enumerate(problems)]
         
@@ -430,5 +508,3 @@ class BenchmarkRunner:
             output_dir: Directory to save visualizations (defaults to metrics_dir/benchmark_timestamp/viz)
         """
         pass
-
-
