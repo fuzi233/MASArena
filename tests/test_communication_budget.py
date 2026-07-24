@@ -13,6 +13,7 @@ from mas_arena.agents import AVAILABLE_AGENT_SYSTEMS
 from mas_arena.agents.communication.config import TeamConfig
 from mas_arena.agents.communication.actions import AggregatorAction
 from mas_arena.agents.communication.prompts import PromptComposer
+from mas_arena.agents.communication.orchestrator import TeamOrchestrator
 from mas_arena.agents.communication.state import CommunicationState
 from mas_arena.agents.communication_budget import CommunicationBudgetMAS
 from mas_arena.agents.step_single_agent import StepSingleAgent
@@ -89,7 +90,7 @@ def test_visible_action_prompt_reports_current_remaining_budget() -> None:
     assert "Remaining question allowance: 2" in prompt[0]["content"]
 
 
-def test_hidden_action_prompt_does_not_leak_budget_information() -> None:
+def test_hidden_action_prompt_shows_steps_but_not_budget_information() -> None:
     state = CommunicationState.create(solver_count=1, budget=2)
     prompt = PromptComposer.solver_step_prompt(
         actor_id="solver_1",
@@ -99,8 +100,32 @@ def test_hidden_action_prompt_does_not_leak_budget_information() -> None:
     )
 
     content = "\n".join(message["content"] for message in prompt).lower()
-    assert "remaining" not in content
+    assert "remaining steps: 4" in content
+    assert "remaining question allowance" not in content
     assert "budget" not in content
+
+
+def test_communication_stats_count_role_actions_repairs_and_forced_final() -> None:
+    stats = BenchmarkRunner._communication_stats(
+        {
+            "events": [
+                {"kind": "continue_reasoning", "sender_id": "solver_1", "charged_budget": 0},
+                {"kind": "solver_question", "sender_id": "solver_1", "charged_budget": 1},
+                {"kind": "solver_submission", "sender_id": "solver_1", "charged_budget": 0},
+                {"kind": "aggregator_think", "sender_id": "aggregator", "charged_budget": 0},
+                {"kind": "aggregator_question", "sender_id": "aggregator", "charged_budget": 1},
+                {"kind": "aggregator_submission", "sender_id": "aggregator", "charged_budget": 0},
+                {"kind": "json_repair", "sender_id": "solver_1", "charged_budget": 0},
+                {"kind": "aggregator_provenance_repair", "sender_id": "aggregator", "charged_budget": 0},
+                {"kind": "forced_final", "sender_id": "aggregator", "charged_budget": 0},
+            ]
+        }
+    )
+
+    assert stats["role_action_counts"] == {
+        "solver_1": {"think": 1, "ask": 1, "submit": 1, "json_repair": 1, "provenance_repair": 0, "forced_final": 0},
+        "aggregator": {"think": 1, "ask": 1, "submit": 1, "json_repair": 0, "provenance_repair": 1, "forced_final": 1},
+    }
 
 
 def test_solver_step_prompt_requires_focused_questions_without_a_repeat_ban() -> None:
@@ -158,6 +183,17 @@ def test_final_aggregator_prompt_requires_a_machine_readable_decision() -> None:
     assert "aggregation_decision" in content
     assert "select_candidate" in content
     assert "rederive_from_trace" in content
+
+
+def test_legacy_final_aggregator_prompt_supports_single_source_repair() -> None:
+    state = CommunicationState.create(solver_count=1, budget=0, max_turns=1)
+    state.record_submission("solver_1", "Check a boundary", "A")
+
+    content = PromptComposer.legacy_final_aggregator_prompt(
+        problem="Question", solver_reports=[state.solver_report("solver_1")], state=state
+    )[0]["content"]
+
+    assert "single_source_repair" in content
 
 
 def test_json_repair_prompt_uses_valid_action_examples() -> None:
@@ -218,7 +254,8 @@ async def test_legacy_v1_k0_uses_the_original_solver_and_aggregator_protocol() -
     ).run_agent({"id": "x", "problem": "Question", "solution": "A"})
 
     kinds = [event["kind"] for event in result["team_state"]["events"]]
-    assert kinds == ["solver_submission"]
+    assert kinds == ["solver_submission", "forced_final"]
+    assert result["team_state"]["events"][-1]["content"]["reason"] == "legacy_final_aggregation"
     assert result["final_answer"].endswith("<final_answer>A</final_answer>")
 
 
@@ -226,6 +263,52 @@ def test_aggregator_action_uses_the_same_think_ask_submit_contract() -> None:
     assert AggregatorAction(action="think", reasoning_note="I need to compare the reports.").action == "think"
     with pytest.raises(ValueError, match="final_answer"):
         AggregatorAction(action="submit", reasoning_note="The evidence is decisive.")
+
+
+def test_aggregator_submit_records_its_decision_provenance() -> None:
+    action = AggregatorAction(
+        action="submit",
+        reasoning_note="Solver 2's candidate is the only one supported by the evidence.",
+        final_answer="A",
+        decision_mode="select_candidate",
+        source_solver_ids=["solver_2"],
+        selected_candidate_solver_id="solver_2",
+    )
+
+    assert action.decision_mode == "select_candidate"
+    assert action.source_solver_ids == ["solver_2"]
+    assert action.selected_candidate_solver_id == "solver_2"
+
+
+def test_aggregator_submit_allows_a_single_source_repair() -> None:
+    action = AggregatorAction(
+        action="submit",
+        reasoning_note="Solver 2 has the right derivation but needs its arithmetic corrected.",
+        final_answer="B",
+        decision_mode="single_source_repair",
+        source_solver_ids=["solver_2"],
+        selected_candidate_solver_id="solver_2",
+    )
+
+    assert action.decision_mode == "single_source_repair"
+    assert action.source_solver_ids == ["solver_2"]
+
+
+def test_aggregator_decision_rejects_a_selected_solver_outside_its_sources() -> None:
+    state = CommunicationState.create(solver_count=2, budget=0, max_turns=1)
+    state.record_submission("solver_1", "Derived A.", "A")
+    state.record_submission("solver_2", "Derived B.", "B")
+    action = AggregatorAction(
+        action="submit",
+        reasoning_note="Selecting Solver 2.",
+        final_answer="B",
+        decision_mode="select_candidate",
+        source_solver_ids=["solver_1"],
+        selected_candidate_solver_id="solver_2",
+    )
+
+    with pytest.raises(ValueError, match="selected solver must occur"):
+        TeamOrchestrator._decision_from_aggregator_action(action, state)
 
 
 def test_role_budgets_are_separate_and_repeated_questions_charge_normally() -> None:
@@ -279,7 +362,9 @@ async def test_aggregator_thinks_asks_and_submits_a_final_answer() -> None:
                 [
                     '{"action":"think","reasoning_note":"I need to compare the report to the question."}',
                     '{"action":"ask","reasoning_note":"The derivation has one uncertain step.","recipient_id":"solver_1","question":"Which premise supports A?"}',
-                    '{"action":"submit","reasoning_note":"The reply confirms the candidate.","final_answer":"A"}',
+                    '{"action":"submit","reasoning_note":"The reply confirms the candidate.","final_answer":"A",'
+                    '"decision_mode":"select_candidate","source_solver_ids":["solver_1"],'
+                    '"selected_candidate_solver_id":"solver_1"}',
                 ]
             )
 
@@ -312,6 +397,78 @@ async def test_aggregator_thinks_asks_and_submits_a_final_answer() -> None:
     ]
     assert events[-1]["content"]["reasoning_note"] == "The reply confirms the candidate."
     assert result["final_answer"] == "A"
+    assert result["team_state"]["aggregation_decision"] == {
+        "mode": "select_candidate",
+        "source_solver_ids": ["solver_1"],
+        "selected_candidate_solver_id": "solver_1",
+        "rationale": "The reply confirms the candidate.",
+    }
+    assert events[-1]["content"]["aggregation_decision"]["mode"] == "select_candidate"
+
+
+@pytest.mark.asyncio
+async def test_invalid_bounded_submission_provenance_is_repaired_and_preserved() -> None:
+    class ScriptedClient:
+        async def complete_text(self, messages: list[dict[str, str]]) -> str:
+            system = messages[0]["content"]
+            if "synchronous team step" in system:
+                return '{"action":"submit","reasoning_note":"Solved","candidate_answer":"A"}'
+            if "Re-output only valid JSON" in system:
+                return (
+                    '{"action":"submit","reasoning_note":"Solver 1 is correct.","final_answer":"A",'
+                    '"decision_mode":"select_candidate","source_solver_ids":["solver_1"],'
+                    '"selected_candidate_solver_id":"solver_1"}'
+                )
+            if "bounded sequential review step" in system:
+                return (
+                    '{"action":"submit","reasoning_note":"I select Solver 2.","final_answer":"A",'
+                    '"decision_mode":"select_candidate","source_solver_ids":["solver_1"],'
+                    '"selected_candidate_solver_id":"solver_2"}'
+                )
+            raise AssertionError(f"Unexpected prompt: {system}")
+
+    result = await CommunicationBudgetMAS(
+        config={"solver_count": 1, "communication_budget": 0, "max_turns": 1, "model_client": ScriptedClient()}
+    ).run_agent({"id": "x", "problem": "Question", "solution": "A"})
+
+    repair_event = next(event for event in result["team_state"]["events"] if event["kind"] == "aggregator_provenance_repair")
+    assert repair_event["content"]["repaired"] is True
+    assert repair_event["content"]["validation_error"] == "selected solver must occur in source_solver_ids"
+    assert result["team_state"]["aggregation_decision"]["selected_candidate_solver_id"] == "solver_1"
+
+
+@pytest.mark.asyncio
+async def test_invalid_forced_final_provenance_is_retried_and_preserved() -> None:
+    class ScriptedClient:
+        def __init__(self) -> None:
+            self.final_calls = 0
+
+        async def complete_text(self, messages: list[dict[str, str]]) -> str:
+            system = messages[0]["content"]
+            if "synchronous team step" in system:
+                return '{"action":"submit","reasoning_note":"Solved","candidate_answer":"A"}'
+            if "bounded sequential review step" in system:
+                return '{"action":"think","reasoning_note":"Need forced final."}'
+            if "Re-output exactly two adjacent XML elements" in system:
+                return (
+                    '<aggregation_decision>{"mode":"select_candidate","source_solver_ids":["solver_1"],'
+                    '"selected_candidate_solver_id":"solver_1","rationale":"Candidate matches."}'
+                    '</aggregation_decision><final_answer>A</final_answer>'
+                )
+            self.final_calls += 1
+            return (
+                '<aggregation_decision>{"mode":"rederive_from_trace","source_solver_ids":["solver_1"],'
+                '"selected_candidate_solver_id":"solver_1","rationale":"Invalid selected source."}'
+                '</aggregation_decision><final_answer>A</final_answer>'
+            )
+
+    result = await CommunicationBudgetMAS(
+        config={"solver_count": 1, "communication_budget": 0, "max_turns": 1, "model_client": ScriptedClient()}
+    ).run_agent({"id": "x", "problem": "Question", "solution": "A"})
+
+    repair_event = next(event for event in result["team_state"]["events"] if event["kind"] == "aggregator_final_decision_repair")
+    assert repair_event["content"]["repaired"] is True
+    assert result["team_state"]["aggregation_decision"]["mode"] == "select_candidate"
 
 
 @pytest.mark.asyncio
@@ -354,7 +511,9 @@ async def test_aggregator_waits_for_free_reply_before_next_review_action() -> No
                 return (
                     '{"action":"ask","reasoning_note":"I need confirmation.","recipient_id":"solver_1","question":"Confirm?"}'
                     if self.aggregator_actions == 1
-                    else '{"action":"submit","reasoning_note":"The reply confirms A.","final_answer":"A"}'
+                    else '{"action":"submit","reasoning_note":"The reply confirms A.","final_answer":"A",'
+                    '"decision_mode":"select_candidate","source_solver_ids":["solver_1"],'
+                    '"selected_candidate_solver_id":"solver_1"}'
                 )
             return "<final_answer>A</final_answer>"
 
@@ -437,7 +596,11 @@ async def test_invalid_solver_action_is_reprompted_once_before_fallback() -> Non
             if "synchronous team step" in system:
                 return "I choose to submit: A"
             if "bounded sequential review step" in system:
-                return '{"action":"submit","reasoning_note":"The candidate is valid.","final_answer":"A"}'
+                return (
+                    '{"action":"submit","reasoning_note":"The candidate is valid.","final_answer":"A",'
+                    '"decision_mode":"select_candidate","source_solver_ids":["solver_1"],'
+                    '"selected_candidate_solver_id":"solver_1"}'
+                )
             return "<final_answer>A</final_answer>"
 
     client = RetryClient()

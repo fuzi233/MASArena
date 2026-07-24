@@ -157,6 +157,14 @@ def main():
         "--temperature", type=float, default=1.0,
         help="Model sampling temperature for communication_budget and step_single_agent (default: 1.0)",
     )
+    team_group.add_argument(
+        "--max-model-retries", type=int, default=5,
+        help="Maximum retries for each retryable model HTTP request (default: 5)",
+    )
+    team_group.add_argument(
+        "--retry-delay-seconds", type=float, default=1.0,
+        help="Delay between retryable model HTTP requests in seconds (default: 1.0)",
+    )
 
     # Optimizer arguments
     optimizer_group = parser.add_argument_group("Optimizer Settings")
@@ -201,6 +209,10 @@ def main():
         parser.error("--aggregator-max-steps must be at least 1")
     if not 0.0 <= args.temperature <= 2.0:
         parser.error("--temperature must be between 0.0 and 2.0")
+    if args.max_model_retries < 0:
+        parser.error("--max-model-retries must be non-negative")
+    if args.retry_delay_seconds < 0:
+        parser.error("--retry-delay-seconds must be non-negative")
 
     if args.run_optimizer:
         if args.run_optimizer == "aflow":
@@ -272,6 +284,8 @@ def main():
         "aggregator_max_steps": args.aggregator_max_steps,
         "protocol_version": args.protocol_version,
         "temperature": args.temperature,
+        "max_model_retries": args.max_model_retries,
+        "retry_delay_seconds": args.retry_delay_seconds,
     })
 
     # Create directories if needed
@@ -297,6 +311,7 @@ def main():
         print(f"Protocol: {args.protocol_version}")
         print(f"Solvers: {args.solver_count}; solver budget: {resolved_solver_budget}; aggregator budget: {resolved_aggregator_budget}")
         print(f"Budget visibility: {args.budget_visibility}; solver max turns: {args.max_turns}; aggregator max steps: {resolved_aggregator_steps}")
+        print(f"Model request retries: {args.max_model_retries}; retry delay: {args.retry_delay_seconds}s")
     print("=" * 80 + "\n")
 
     # Create benchmark runner

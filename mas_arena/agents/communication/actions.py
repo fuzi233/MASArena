@@ -40,6 +40,9 @@ class AggregatorAction(BaseModel):
     recipient_id: str | None = None
     question: str | None = None
     final_answer: str | None = None
+    decision_mode: Literal["select_candidate", "single_source_repair", "rederive_from_trace"] | None = None
+    source_solver_ids: list[str] | None = None
+    selected_candidate_solver_id: str | None = None
 
     @model_validator(mode="after")
     def validate_shape(self) -> "AggregatorAction":
@@ -49,6 +52,21 @@ class AggregatorAction(BaseModel):
             raise ValueError("ask requires recipient_id and question")
         if self.action == "submit" and (not self.final_answer or not self.final_answer.strip()):
             raise ValueError("submit requires final_answer")
+        if self.action == "submit" and self.decision_mode is None:
+            raise ValueError("submit requires decision_mode")
+        if self.action == "submit" and not self.source_solver_ids:
+            raise ValueError("submit requires source_solver_ids")
+        if self.action == "submit" and self.source_solver_ids and (
+            any(not solver_id.strip() for solver_id in self.source_solver_ids)
+            or len(set(self.source_solver_ids)) != len(self.source_solver_ids)
+        ):
+            raise ValueError("source_solver_ids must be unique non-empty solver IDs")
+        if self.action == "submit" and self.decision_mode in {"select_candidate", "single_source_repair"} and not self.selected_candidate_solver_id:
+            raise ValueError("candidate selection and repair require selected_candidate_solver_id")
+        if self.action == "submit" and self.decision_mode == "single_source_repair" and len(self.source_solver_ids or []) != 1:
+            raise ValueError("single_source_repair requires exactly one source solver")
+        if self.action == "submit" and self.decision_mode == "rederive_from_trace" and self.selected_candidate_solver_id is not None:
+            raise ValueError("rederive_from_trace must not select a candidate solver")
         return self
 
 

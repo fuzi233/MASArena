@@ -160,13 +160,72 @@ class CommunicationState:
         self.budgets["aggregator"] -= 1
         return self._append_event("aggregator_question", "aggregator", recipient_id, {"question": question}, 1)
 
-    def record_aggregator_submission(self, reasoning_note: str, final_answer: str) -> dict[str, object]:
+    def record_aggregator_submission(
+        self, reasoning_note: str, final_answer: str, aggregation_decision: dict[str, object]
+    ) -> dict[str, object]:
         self._consume_aggregator_step(reasoning_note)
         if not final_answer.strip():
             raise ValueError("final_answer must not be empty")
         return self._append_event(
-            "aggregator_submission", "aggregator", None, {"reasoning_note": reasoning_note, "final_answer": final_answer}, 0
+            "aggregator_submission",
+            "aggregator",
+            None,
+            {
+                "reasoning_note": reasoning_note,
+                "final_answer": final_answer,
+                "aggregation_decision": aggregation_decision,
+            },
+            0,
         )
+
+    def record_aggregator_provenance_repair(
+        self,
+        *,
+        invalid_action: dict[str, object],
+        validation_error: str,
+        repair_output: str,
+        repaired: bool,
+        repair_error: str | None = None,
+    ) -> dict[str, object]:
+        """Preserve one bounded-review provenance repair attempt without charging a step."""
+        content: dict[str, object] = {
+            "invalid_action": invalid_action,
+            "validation_error": validation_error,
+            "repair_output": repair_output,
+            "repaired": repaired,
+        }
+        if repair_error is not None:
+            content["repair_error"] = repair_error
+        return self._append_event("aggregator_provenance_repair", "aggregator", None, content, 0)
+
+    def record_aggregator_final_decision_repair(
+        self,
+        *,
+        invalid_output: str,
+        validation_error: str,
+        repair_output: str,
+        repaired: bool,
+        repair_error: str | None = None,
+    ) -> dict[str, object]:
+        """Preserve one forced-final decision repair attempt without charging a step."""
+        content: dict[str, object] = {
+            "invalid_output": invalid_output,
+            "validation_error": validation_error,
+            "repair_output": repair_output,
+            "repaired": repaired,
+        }
+        if repair_error is not None:
+            content["repair_error"] = repair_error
+        return self._append_event("aggregator_final_decision_repair", "aggregator", None, content, 0)
+
+    def record_json_repair(self, actor_id: str, action_kind: str) -> dict[str, object]:
+        """Record a schema-repair request without changing protocol state."""
+        self._require_actor(actor_id)
+        return self._append_event("json_repair", actor_id, None, {"action_kind": action_kind}, 0)
+
+    def record_forced_final(self, reason: str) -> dict[str, object]:
+        """Record the final fallback call made outside a bounded review step."""
+        return self._append_event("forced_final", "aggregator", None, {"reason": reason}, 0)
 
     def record_aggregator_reply(self, solver_id: str, question_sequence_id: int, reply: str) -> dict[str, object]:
         self._require_solver(solver_id)

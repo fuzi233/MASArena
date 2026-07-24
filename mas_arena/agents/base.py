@@ -532,8 +532,8 @@ class AgentSystem(abc.ABC):
                 {"problem_id": problem_id, "agent_system": self.name, "evaluator": self.evaluator.name, "run_id": run_id}
             )
         
+        agent_run_start_time = time.perf_counter()
         try:
-            agent_run_start_time = time.perf_counter()
             run_output = await self.run_agent(problem, **kwargs)
             agent_run_end_time = time.perf_counter()
             execution_time_ms = (agent_run_end_time - agent_run_start_time) * 1000
@@ -578,6 +578,7 @@ class AgentSystem(abc.ABC):
             }
             
         except Exception as e:
+            execution_time_ms = (time.perf_counter() - agent_run_start_time) * 1000
             # Record error
             if self.metrics_collector:
                 self.metrics_collector.stop_timer("problem_evaluation")
@@ -598,8 +599,10 @@ class AgentSystem(abc.ABC):
                 "score": 0.0,
                 "is_correct": False,
                 "reasoning": f"Evaluation failed with error: {str(e)}",
+                "error": str(e),
+                "error_type": type(e).__name__,
                 "messages": [],
-                "execution_time_ms": 0,
+                "execution_time_ms": execution_time_ms,
                 "llm_usage": {"total_tokens": 0, "message_count": 0, "agent_usage": []},
                 "response_file": None,
                 "visualization_file": None,

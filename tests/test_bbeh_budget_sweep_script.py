@@ -34,6 +34,26 @@ def test_bounded_v2_role_sweep_covers_four_diagonal_budget_visibility_pairs() ->
     assert '--aggregator-max-steps 100' in content
 
 
+def test_foundation_sweep_covers_all_approved_pairs_with_retry_policy() -> None:
+    script = Path(__file__).resolve().parents[1] / "run_bbeh_foundation_sweep.sh"
+    content = script.read_text(encoding="utf-8")
+
+    assert 'MODEL_NAME="${MODEL_NAME:-gpt-4o-mini}"' in content
+    assert 'ROLE_BUDGETS=(' in content
+    assert 'VISIBILITIES=(hidden visible)' in content
+    for pair in ('"0 0"', '"1 1"', '"2 2"', '"5 5"', '"10 10"'):
+        assert pair in content
+    assert '--limit 80' in content
+    assert '--concurrency 4' in content
+    assert '--seed 42' in content
+    assert '--max-model-retries 20' in content
+    assert '--retry-delay-seconds 2' in content
+    assert '--protocol-version bounded-v2' in content
+    assert 'LOG_DIR="logs/gpt4o-mini-foundation"' in content
+    assert 'mkdir -p "$LOG_DIR"' in content
+    assert 'tee "$log_file"' in content
+
+
 def test_qwen_role_sweep_requires_external_api_configuration() -> None:
     script = Path(__file__).resolve().parents[1] / "run_bbeh_bounded_v2_role_sweep_qwen.sh"
     content = script.read_text(encoding="utf-8")

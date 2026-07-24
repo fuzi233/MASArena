@@ -125,6 +125,29 @@ class BenchmarkRunner:
     def _communication_stats(team_state):
         """Derive compact aggregate counts while retaining the raw trace separately."""
         events = team_state.get("events", []) if isinstance(team_state, dict) else []
+        action_kind = {
+            "continue_reasoning": "think",
+            "aggregator_think": "think",
+            "solver_question": "ask",
+            "aggregator_question": "ask",
+            "solver_submission": "submit",
+            "aggregator_submission": "submit",
+            "json_repair": "json_repair",
+            "aggregator_provenance_repair": "provenance_repair",
+            "aggregator_final_decision_repair": "provenance_repair",
+            "forced_final": "forced_final",
+        }
+        role_action_counts = {}
+        for event in events:
+            action = action_kind.get(event.get("kind"))
+            actor = event.get("sender_id")
+            if action is None or not isinstance(actor, str):
+                continue
+            counts = role_action_counts.setdefault(
+                actor,
+                {"think": 0, "ask": 0, "submit": 0, "json_repair": 0, "provenance_repair": 0, "forced_final": 0},
+            )
+            counts[action] += 1
         return {
             "solver_questions": sum(event.get("kind") == "solver_question" for event in events),
             "aggregator_questions": sum(event.get("kind") == "aggregator_question" for event in events),
@@ -132,6 +155,7 @@ class BenchmarkRunner:
             "aggregator_replies": sum(event.get("kind") == "aggregator_reply" for event in events),
             "charged_question_budget": sum(int(event.get("charged_budget", 0)) for event in events),
             "solver_steps": team_state.get("solver_steps", {}),
+            "role_action_counts": role_action_counts,
         }
 
     def _prepare_benchmark(self, benchmark_name, data_path, limit, agent_system, agent_config, verbose, data_id=None, seed=42):
@@ -227,6 +251,9 @@ class BenchmarkRunner:
                 "llm_usage": results.get("llm_usage", {}),
                 "summary": {"correct": is_correct, "score": score, "duration_ms": duration_ms},
             }
+            if results.get("status") == "error":
+                result_entry["error"] = results.get("error", results.get("reasoning", ""))
+                result_entry["error_type"] = results.get("error_type", "UnknownError")
             team_state = results.get("team_state")
             if isinstance(team_state, dict):
                 result_entry["communication_trace"] = team_state
@@ -234,7 +261,11 @@ class BenchmarkRunner:
                 result_entry["aggregation_decision"] = team_state.get("aggregation_decision")
             if verbose:
                 status_char = "E" if results.get("status") == "error" else "✓" if is_correct else "✗"
-                print(f"Result: {status_char} ({duration_ms:.0f}ms)")
+                error_summary = ""
+                if status_char == "E":
+                    raw_error = str(results.get("error", results.get("reasoning", "")))
+                    error_summary = f" — {' '.join(raw_error.split())[:500]}" if raw_error else ""
+                print(f"Result: {status_char} ({duration_ms:.0f}ms){error_summary}")
             return result_entry
         except Exception as e:
             self.metrics_collector.stop_timer(f"mas_arena.problem.{problem_id}")
