@@ -39,10 +39,14 @@ def test_foundation_sweep_covers_all_approved_pairs_with_retry_policy() -> None:
     content = script.read_text(encoding="utf-8")
 
     assert 'MODEL_NAME="${MODEL_NAME:-gpt-4o-mini}"' in content
-    assert 'ROLE_BUDGETS=(' in content
+    assert 'APPROVED_PAIRS=(' in content
     assert 'VISIBILITIES=(hidden visible)' in content
     for pair in ('"0 0"', '"1 1"', '"2 2"', '"5 5"', '"10 10"'):
         assert pair in content
+    assert 'Usage: $0 <solver_budget> <aggregator_budget>' in content
+    assert 'Run exactly one approved budget pair' in content
+    assert 'for visibility in "${VISIBILITIES[@]}"; do' in content
+    assert 'for role_budget in' not in content
     assert '--limit 80' in content
     assert '--concurrency 4' in content
     assert '--seed 42' in content
