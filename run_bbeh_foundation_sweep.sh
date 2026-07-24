@@ -35,6 +35,13 @@ if [[ "$pair_is_approved" != true ]]; then
   exit 2
 fi
 
+if [[ -z "${OPENAI_API_KEY:-}" && -f .env ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source .env
+  set +a
+fi
+
 : "${OPENAI_API_KEY:?Set OPENAI_API_KEY before launching the foundation sweep.}"
 MODEL_NAME="${MODEL_NAME:-gpt-4o-mini}"
 export MODEL_NAME

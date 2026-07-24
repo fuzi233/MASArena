@@ -45,6 +45,8 @@ def test_foundation_sweep_covers_all_approved_pairs_with_retry_policy() -> None:
         assert pair in content
     assert 'Usage: $0 <solver_budget> <aggregator_budget>' in content
     assert 'Run exactly one approved budget pair' in content
+    assert '[[ -z "${OPENAI_API_KEY:-}" && -f .env ]]' in content
+    assert 'source .env' in content
     assert 'for visibility in "${VISIBILITIES[@]}"; do' in content
     assert 'for role_budget in' not in content
     assert '--limit 80' in content
