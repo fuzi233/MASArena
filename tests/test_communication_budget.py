@@ -103,7 +103,7 @@ def test_hidden_action_prompt_does_not_leak_budget_information() -> None:
     assert "budget" not in content
 
 
-def test_solver_step_prompt_requires_focused_nonrepeating_questions() -> None:
+def test_solver_step_prompt_requires_focused_questions_without_a_repeat_ban() -> None:
     state = CommunicationState.create(solver_count=2, budget=1, max_turns=2)
 
     prompt = PromptComposer.solver_step_prompt(
@@ -111,12 +111,38 @@ def test_solver_step_prompt_requires_focused_nonrepeating_questions() -> None:
     )
 
     assert "least certain" in prompt[0]["content"]
-    assert "Do not repeat a question" in prompt[0]["content"]
+    assert "Do not repeat a question" not in prompt[0]["content"]
     assert "Remaining question allowance: 1" in prompt[0]["content"]
     assert "Remaining steps: 2" in prompt[0]["content"]
     assert "start with `{` and end with `}`" in prompt[0]["content"]
     assert '"action":"think"' in prompt[0]["content"]
     assert "```" in prompt[0]["content"]
+
+
+def test_zero_solver_budget_prompt_omits_the_unavailable_ask_action() -> None:
+    state = CommunicationState.create(solver_count=2, solver_budget=0, aggregator_budget=0, max_turns=2)
+
+    content = PromptComposer.solver_step_prompt(
+        actor_id="solver_1", problem="Question", state=state, visibility="hidden"
+    )[0]["content"]
+
+    assert '"action":"ask"' not in content
+    assert "eligible_recipient_ids" not in content
+    assert '"action":"think"' in content
+    assert '"action":"submit"' in content
+
+
+def test_zero_aggregator_budget_prompt_omits_the_unavailable_ask_action() -> None:
+    state = CommunicationState.create(solver_count=2, solver_budget=1, aggregator_budget=0, max_turns=2)
+
+    content = PromptComposer.aggregator_step_prompt(
+        problem="Question", solver_reports=[], state=state, visibility="hidden"
+    )[0]["content"]
+
+    assert '"action":"ask"' not in content
+    assert "eligible_recipient_ids" not in content
+    assert '"action":"think"' in content
+    assert '"action":"submit"' in content
 
 
 def test_final_aggregator_prompt_requires_a_machine_readable_decision() -> None:
@@ -202,7 +228,7 @@ def test_aggregator_action_uses_the_same_think_ask_submit_contract() -> None:
         AggregatorAction(action="submit", reasoning_note="The evidence is decisive.")
 
 
-def test_role_budgets_are_separate_and_duplicate_questions_do_not_charge() -> None:
+def test_role_budgets_are_separate_and_repeated_questions_charge_normally() -> None:
     state = CommunicationState.create(
         solver_count=2,
         solver_budget=2,
@@ -215,10 +241,12 @@ def test_role_budgets_are_separate_and_duplicate_questions_do_not_charge() -> No
     assert state.remaining("solver_1") == 1
     assert state.remaining("aggregator") == 1
 
-    with pytest.raises(ValueError, match="duplicate question"):
-        state.record_solver_question("solver_1", "solver_2", "  check   premise p. ", "I still need confirmation.")
+    repeated = state.record_solver_question(
+        "solver_1", "solver_2", "  check   premise p. ", "I still need confirmation."
+    )
 
-    assert state.remaining("solver_1") == 1
+    assert repeated["kind"] == "solver_question"
+    assert state.remaining("solver_1") == 0
 
 
 def test_role_prompts_use_runtime_recipients_without_fixed_solver_examples() -> None:

@@ -18,25 +18,41 @@ class PromptComposer:
         return recipients[offset:] + recipients[:offset]
 
     @staticmethod
-    def _action_contract(*, role: str, eligible_recipient_ids: tuple[str, ...], final_answer_key: str) -> str:
-        return (
-            f"You are the {role}. Explore the problem and record a concise reasoning_note. "
-            "If you ask, ask one eligible solver about the assumption, derivation, counterexample, or fact you are least certain about. "
-            "Do not repeat a question already present in your working record. "
-            f"eligible_recipient_ids (ordered only for display): {list(eligible_recipient_ids)}. Choose by relevance, never by identifier order. "
-            "Your entire response must be exactly one valid JSON object: start with `{` and end with `}`. "
-            "Do not use Markdown fences (```), prose before or after the JSON, comments, or additional keys. "
-            'Choose exactly one valid form: {"action":"think","reasoning_note":"brief private progress"}; '
-            '{"action":"ask","reasoning_note":"specific uncertainty","recipient_id":"<eligible_solver_id>","question":"focused question"}; '
-            f'{{"action":"submit","reasoning_note":"final concise rationale","{final_answer_key}":"exact answer"}}.'
+    def _action_contract(
+        *, role: str, eligible_recipient_ids: tuple[str, ...], final_answer_key: str, allow_ask: bool
+    ) -> str:
+        sections = [f"You are the {role}. Explore the problem and record a concise reasoning_note."]
+        if allow_ask:
+            sections.extend(
+                [
+                    "If you ask, ask one eligible solver about the assumption, derivation, counterexample, or fact you are least certain about.",
+                    f"eligible_recipient_ids (ordered only for display): {list(eligible_recipient_ids)}. Choose by relevance, never by identifier order.",
+                ]
+            )
+        sections.extend(
+            [
+                "Your entire response must be exactly one valid JSON object: start with `{` and end with `}`.",
+                "Do not use Markdown fences (```), prose before or after the JSON, comments, or additional keys.",
+            ]
         )
+        forms = ['{"action":"think","reasoning_note":"brief private progress"}']
+        if allow_ask:
+            forms.append('{"action":"ask","reasoning_note":"specific uncertainty","recipient_id":"<eligible_solver_id>","question":"focused question"}')
+        forms.append(f'{{"action":"submit","reasoning_note":"final concise rationale","{final_answer_key}":"exact answer"}}')
+        sections.append(f"Choose exactly one valid form: {'; '.join(forms)}.")
+        return " ".join(sections)
 
     @staticmethod
     def solver_step_prompt(*, actor_id: str, problem: str, state: CommunicationState, visibility: Literal["visible", "hidden"]) -> list[dict[str, str]]:
         eligible_recipient_ids = PromptComposer._eligible_recipients(actor_id, state)
         sections = [
             f"You are {actor_id}, an independent solver in a synchronous team step.",
-            PromptComposer._action_contract(role="solver", eligible_recipient_ids=eligible_recipient_ids, final_answer_key="candidate_answer"),
+            PromptComposer._action_contract(
+                role="solver",
+                eligible_recipient_ids=eligible_recipient_ids,
+                final_answer_key="candidate_answer",
+                allow_ask=state.can_send(actor_id),
+            ),
         ]
         if visibility == "visible":
             sections.append(f"Remaining question allowance: {state.remaining(actor_id)}. Remaining steps: {state.max_turns - state.actor_step_count(actor_id)}.")
@@ -50,7 +66,12 @@ class PromptComposer:
         eligible_recipient_ids = PromptComposer._eligible_recipients("aggregator", state)
         sections = [
             "You are the aggregator in a bounded sequential review step. All solver reports are complete.",
-            PromptComposer._action_contract(role="aggregator", eligible_recipient_ids=eligible_recipient_ids, final_answer_key="final_answer"),
+            PromptComposer._action_contract(
+                role="aggregator",
+                eligible_recipient_ids=eligible_recipient_ids,
+                final_answer_key="final_answer",
+                allow_ask=state.can_send("aggregator"),
+            ),
         ]
         if visibility == "visible":
             sections.append(f"Remaining question allowance: {state.remaining('aggregator')}. Remaining steps: {state.aggregator_max_steps - state.actor_step_count('aggregator')}.")

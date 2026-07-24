@@ -14,3 +14,57 @@ def test_bbeh_budget_sweep_covers_all_budget_visibility_pairs() -> None:
     assert '--solver-count 3' in content
     assert '--max-turns 100' in content
     assert '--seed 42' in content
+
+
+def test_bounded_v2_role_sweep_covers_four_diagonal_budget_visibility_pairs() -> None:
+    script = Path(__file__).resolve().parents[1] / "run_bbeh_bounded_v2_role_sweep.sh"
+    content = script.read_text(encoding="utf-8")
+
+    assert 'MODEL_NAME="${MODEL_NAME:-gpt-4o-mini}"' in content
+    assert 'ROLE_BUDGETS=(' in content
+    assert 'VISIBILITIES=(hidden visible)' in content
+    assert 'if [[ "$solver_budget" == "0" && "$aggregator_budget" == "0" ]]' in content
+    for pair in ('"0 0"', '"1 1"', '"2 2"', '"5 5"'):
+        assert pair in content
+    assert '"1 0"' not in content
+    assert '"2 10"' not in content
+    assert '--protocol-version bounded-v2' in content
+    assert '--budget-visibility "$visibility"' in content
+    assert '--max-turns 100' in content
+    assert '--aggregator-max-steps 100' in content
+
+
+def test_qwen_role_sweep_requires_external_api_configuration() -> None:
+    script = Path(__file__).resolve().parents[1] / "run_bbeh_bounded_v2_role_sweep_qwen.sh"
+    content = script.read_text(encoding="utf-8")
+
+    assert 'MODEL_NAME="qwen3.5-plus"' in content
+    assert 'QWEN_API_KEY' in content
+    assert 'QWEN_API_BASE' in content
+    assert 'export OPENAI_API_KEY="$QWEN_API_KEY"' in content
+    assert 'export OPENAI_API_BASE="$QWEN_API_BASE"' in content
+    for pair in ('"0 0"', '"1 0"', '"0 1"', '"1 1"', '"1 2"', '"2 2"'):
+        assert pair in content
+    assert '"2 5"' not in content
+    assert '"2 10"' not in content
+    assert '--max-turns 100' in content
+    assert '--aggregator-max-steps 100' in content
+
+
+def test_deepseek_pilot_sweep_reuses_project_api_configuration_for_four_diagonal_cells() -> None:
+    script = Path(__file__).resolve().parents[1] / "run_bbeh_bounded_v2_deepseek_pilot.sh"
+    content = script.read_text(encoding="utf-8")
+
+    assert 'MODEL_NAME="DeepSeek-V4-Flash"' in content
+    assert 'DEEPSEEK_API_KEY' not in content
+    assert 'export OPENAI_API_KEY=' not in content
+    assert 'OPENAI_API_BASE=' not in content
+    assert 'VISIBILITIES=(hidden visible)' in content
+    assert 'if [[ "$solver_budget" == "0" && "$aggregator_budget" == "0" ]]' in content
+    for pair in ('"0 0"', '"1 1"', '"2 2"', '"5 5"'):
+        assert pair in content
+    assert '"1 0"' not in content
+    assert '--limit 80' in content
+    assert '--budget-visibility "$visibility"' in content
+    assert '--max-turns 100' in content
+    assert '--aggregator-max-steps 100' in content

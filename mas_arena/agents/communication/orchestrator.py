@@ -29,7 +29,6 @@ class TeamOrchestrator:
             aggregator_budget=self.config.resolved_aggregator_communication_budget,
             max_turns=self.config.max_turns,
             aggregator_max_steps=self.config.resolved_aggregator_max_steps,
-            prevent_duplicate_questions=self.config.protocol_version != "legacy-v1",
         )
         await self._run_solver_phase(problem, state)
         reports = [state.solver_report(solver_id) for solver_id in state.solver_ids]
