@@ -41,6 +41,7 @@ def test_foundation_sweep_covers_all_approved_pairs_with_retry_policy() -> None:
     assert 'MODEL_NAME="${MODEL_NAME:-gpt-4o-mini}"' in content
     assert 'APPROVED_PAIRS=(' in content
     assert 'VISIBILITIES=(hidden visible)' in content
+    assert 'if [[ "$selected_pair" == "0 0" ]]; then\n  VISIBILITIES=(hidden)\nelse\n  VISIBILITIES=(hidden visible)\nfi' in content
     for pair in ('"0 0"', '"1 1"', '"2 2"', '"5 5"', '"10 10"'):
         assert pair in content
     assert 'Usage: $0 <solver_budget> <aggregator_budget>' in content

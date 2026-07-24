@@ -48,7 +48,11 @@ export MODEL_NAME
 LOG_DIR="logs/gpt4o-mini-foundation"
 mkdir -p "$LOG_DIR"
 
-VISIBILITIES=(hidden visible)
+if [[ "$selected_pair" == "0 0" ]]; then
+  VISIBILITIES=(hidden)
+else
+  VISIBILITIES=(hidden visible)
+fi
 
 for visibility in "${VISIBILITIES[@]}"; do
   echo "Running foundation sweep: model=${MODEL_NAME}, S=${solver_budget}, A=${aggregator_budget}, visibility=${visibility}"
