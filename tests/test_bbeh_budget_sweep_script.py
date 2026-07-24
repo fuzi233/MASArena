@@ -57,6 +57,7 @@ def test_foundation_sweep_covers_all_approved_pairs_with_retry_policy() -> None:
     assert '--protocol-version bounded-v2' in content
     assert 'LOG_DIR="logs/gpt4o-mini-foundation"' in content
     assert 'mkdir -p "$LOG_DIR"' in content
+    assert 'uv run python -u main.py' in content
     assert 'tee "$log_file"' in content
 
 

@@ -54,7 +54,7 @@ for visibility in "${VISIBILITIES[@]}"; do
   echo "Running foundation sweep: model=${MODEL_NAME}, S=${solver_budget}, A=${aggregator_budget}, visibility=${visibility}"
   run_stamp="$(date +%Y%m%d_%H%M%S)"
   log_file="$LOG_DIR/bbeh_s${solver_budget}_a${aggregator_budget}_${visibility}_${run_stamp}_$$.log"
-  uv run python main.py \
+  uv run python -u main.py \
     --benchmark bbeh \
     --data ../manifests/bbeh_probe_v1.jsonl \
     --agent-system communication_budget \
